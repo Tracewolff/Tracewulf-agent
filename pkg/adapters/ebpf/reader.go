@@ -8,7 +8,7 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
-type Event struct {
+type ringbufEvent struct {
 	Pid  uint32
 	Comm [16]byte
 }
@@ -22,7 +22,7 @@ func ReadEvents(rd *ringbuf.Reader) error {
 			return err
 		}
 
-		var e Event
+		var e ringbufEvent
 
 		if err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &e); err != nil {
 			continue
