@@ -36,11 +36,17 @@ int handle_exec(void *ctx)
 SEC("kprobe/tcp_v4_connect")
 int BPF_KPROBE(handle_tcp_connect, struct sock *sk)
 {
+    bpf_printk("tcp_connect fired\n");
+
     struct event *e;
 
     e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e)
+    if (!e) {
+        bpf_printk("ringbuf reserve FAILED\n");
         return 0;
+    }
+
+    bpf_printk("ringbuf reserve OK, about to submit\n");
 
     e->pid = bpf_get_current_pid_tgid() >> 32;
 
@@ -58,7 +64,11 @@ int BPF_KPROBE(handle_tcp_connect, struct sock *sk)
     e->dst_port =
         BPF_CORE_READ(sk, __sk_common.skc_dport);
 
+    bpf_printk("read values: src=%u dst=%u\n", e->src_ip, e->dst_ip);
+
     bpf_ringbuf_submit(e, 0);
+
+    bpf_printk("submitted\n");
 
     return 0;
 }

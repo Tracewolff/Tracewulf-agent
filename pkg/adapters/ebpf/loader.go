@@ -31,6 +31,16 @@ func Start() error {
     }
     defer tp.Close()
 
+    kp, err := link.Kprobe(
+        "tcp_v4_connect",
+        objs.HandleTcpConnect,
+        nil,
+    )
+    if err != nil {
+        return err
+    }
+    defer kp.Close()
+
     rd, err := ringbuf.NewReader(objs.Events)
     if err != nil {
         return err
@@ -38,7 +48,7 @@ func Start() error {
     defer rd.Close()
 
     log.Println("TraceWulf eBPF program attached")
-    log.Println("Watching execve() events...")
+    log.Println("Watching execve() and tcp_v4_connect() events...")
 
     return ReadEvents(rd)
 }
