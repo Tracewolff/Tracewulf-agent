@@ -31,15 +31,25 @@ func Start() error {
     }
     defer tp.Close()
 
-    kp, err := link.Kprobe(
+    kpEntry, err := link.Kprobe(
         "tcp_v4_connect",
-        objs.HandleTcpConnect,
+        objs.HandleTcpConnectEntry,
         nil,
     )
     if err != nil {
         return err
     }
-    defer kp.Close()
+    defer kpEntry.Close()
+
+    kpExit, err := link.Kretprobe(
+        "tcp_v4_connect",
+        objs.HandleTcpConnectExit,
+        nil,
+    )
+    if err != nil {
+        return err
+    }
+    defer kpExit.Close()
 
     rd, err := ringbuf.NewReader(objs.Events)
     if err != nil {

@@ -18,14 +18,16 @@ type ringbufEvent struct {
 	DstPort uint16
 }
 
+func swapUint16(v uint16) uint16 {
+	return (v >> 8) | (v << 8)
+}
+
 func ReadEvents(rd *ringbuf.Reader) error {
 	for {
 		record, err := rd.Read()
 		if err != nil {
 			return err
 		}
-
-		fmt.Printf("[DEBUG] got record, len=%d bytes\n", len(record.RawSample))
 
 		var e ringbufEvent
 
@@ -34,16 +36,10 @@ func ReadEvents(rd *ringbuf.Reader) error {
 			binary.LittleEndian,
 			&e,
 		); err != nil {
-			fmt.Printf("[DEBUG] binary.Read FAILED: %v\n", err)
 			continue
 		}
 
 		comm := string(bytes.TrimRight(e.Comm[:], "\x00"))
-
-		fmt.Printf(
-			"[RAW] PID=%d COMM=%s SrcIP=%d DstIP=%d SrcPort=%d DstPort=%d\n",
-			e.Pid, comm, e.SrcIP, e.DstIP, e.SrcPort, e.DstPort,
-		)
 
 		if e.DstIP == 0 {
 			fmt.Printf(
@@ -73,9 +69,9 @@ func ReadEvents(rd *ringbuf.Reader) error {
 			e.Pid,
 			comm,
 			srcIP,
-			e.SrcPort,
+			swapUint16(e.SrcPort),
 			dstIP,
-			e.DstPort,
+			swapUint16(e.DstPort),
 		)
 	}
 }

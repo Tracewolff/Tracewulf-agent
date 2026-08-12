@@ -16,9 +16,11 @@ import (
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	tracerMapEvents            = "events"
-	tracerProgHandleExec       = "handle_exec"
-	tracerProgHandleTcpConnect = "handle_tcp_connect"
+	tracerMapEvents                 = "events"
+	tracerMapSockMap                = "sock_map"
+	tracerProgHandleExec            = "handle_exec"
+	tracerProgHandleTcpConnectEntry = "handle_tcp_connect_entry"
+	tracerProgHandleTcpConnectExit  = "handle_tcp_connect_exit"
 )
 
 // loadTracer returns the embedded CollectionSpec for tracer.
@@ -63,15 +65,17 @@ type tracerSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type tracerProgramSpecs struct {
-	HandleExec       *ebpf.ProgramSpec `ebpf:"handle_exec"`
-	HandleTcpConnect *ebpf.ProgramSpec `ebpf:"handle_tcp_connect"`
+	HandleExec            *ebpf.ProgramSpec `ebpf:"handle_exec"`
+	HandleTcpConnectEntry *ebpf.ProgramSpec `ebpf:"handle_tcp_connect_entry"`
+	HandleTcpConnectExit  *ebpf.ProgramSpec `ebpf:"handle_tcp_connect_exit"`
 }
 
 // tracerMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type tracerMapSpecs struct {
-	Events *ebpf.MapSpec `ebpf:"events"`
+	Events  *ebpf.MapSpec `ebpf:"events"`
+	SockMap *ebpf.MapSpec `ebpf:"sock_map"`
 }
 
 // tracerVariableSpecs contains global variables before they are loaded into the kernel.
@@ -100,12 +104,14 @@ func (o *tracerObjects) Close() error {
 //
 // It can be passed to loadTracerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type tracerMaps struct {
-	Events *ebpf.Map `ebpf:"events"`
+	Events  *ebpf.Map `ebpf:"events"`
+	SockMap *ebpf.Map `ebpf:"sock_map"`
 }
 
 func (m *tracerMaps) Close() error {
 	return _TracerClose(
 		m.Events,
+		m.SockMap,
 	)
 }
 
@@ -119,14 +125,16 @@ type tracerVariables struct {
 //
 // It can be passed to loadTracerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type tracerPrograms struct {
-	HandleExec       *ebpf.Program `ebpf:"handle_exec"`
-	HandleTcpConnect *ebpf.Program `ebpf:"handle_tcp_connect"`
+	HandleExec            *ebpf.Program `ebpf:"handle_exec"`
+	HandleTcpConnectEntry *ebpf.Program `ebpf:"handle_tcp_connect_entry"`
+	HandleTcpConnectExit  *ebpf.Program `ebpf:"handle_tcp_connect_exit"`
 }
 
 func (p *tracerPrograms) Close() error {
 	return _TracerClose(
 		p.HandleExec,
-		p.HandleTcpConnect,
+		p.HandleTcpConnectEntry,
+		p.HandleTcpConnectExit,
 	)
 }
 

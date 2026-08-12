@@ -13,6 +13,13 @@ struct {
     __uint(max_entries, 1 << 24);
 } events SEC(".maps");
 
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u32);
+    __type(value, struct sock *);
+} sock_map SEC(".maps");
+
 
 SEC("tracepoint/syscalls/sys_enter_execve")
 int handle_exec(void *ctx)
@@ -34,21 +41,36 @@ int handle_exec(void *ctx)
 
 
 SEC("kprobe/tcp_v4_connect")
-int BPF_KPROBE(handle_tcp_connect, struct sock *sk)
+int BPF_KPROBE(handle_tcp_connect_entry, struct sock *sk)
 {
-    bpf_printk("tcp_connect fired\n");
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    bpf_map_update_elem(&sock_map, &pid, &sk, BPF_ANY);
+    return 0;
+}
+
+
+SEC("kretprobe/tcp_v4_connect")
+int BPF_KRETPROBE(handle_tcp_connect_exit, int ret)
+{
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+
+    struct sock **skp = bpf_map_lookup_elem(&sock_map, &pid);
+    if (!skp)
+        return 0;
+
+    struct sock *sk = *skp;
+    bpf_map_delete_elem(&sock_map, &pid);
+
+    if (ret != 0)
+        return 0;
 
     struct event *e;
 
     e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
-    if (!e) {
-        bpf_printk("ringbuf reserve FAILED\n");
+    if (!e)
         return 0;
-    }
 
-    bpf_printk("ringbuf reserve OK, about to submit\n");
-
-    e->pid = bpf_get_current_pid_tgid() >> 32;
+    e->pid = pid;
 
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
 
@@ -64,11 +86,7 @@ int BPF_KPROBE(handle_tcp_connect, struct sock *sk)
     e->dst_port =
         BPF_CORE_READ(sk, __sk_common.skc_dport);
 
-    bpf_printk("read values: src=%u dst=%u\n", e->src_ip, e->dst_ip);
-
     bpf_ringbuf_submit(e, 0);
-
-    bpf_printk("submitted\n");
 
     return 0;
 }
