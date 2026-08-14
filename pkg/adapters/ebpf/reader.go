@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/Tracewolff/Tracewulf-agent/pkg/adapters/k8s"
 	"github.com/cilium/ebpf/ringbuf"
 )
 
@@ -22,7 +23,14 @@ func swapUint16(v uint16) uint16 {
 	return (v >> 8) | (v << 8)
 }
 
-func ReadEvents(rd *ringbuf.Reader) error {
+func resolveName(cache *k8s.Cache, ip string) string {
+	if info, ok := cache.Lookup(ip); ok {
+		return fmt.Sprintf("%s/%s", info.Namespace, info.Name)
+	}
+	return ip
+}
+
+func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache) error {
 	for {
 		record, err := rd.Read()
 		if err != nil {
@@ -55,22 +63,25 @@ func ReadEvents(rd *ringbuf.Reader) error {
 			byte(e.SrcIP>>8),
 			byte(e.SrcIP>>16),
 			byte(e.SrcIP>>24),
-		)
+		).String()
 
 		dstIP := net.IPv4(
 			byte(e.DstIP),
 			byte(e.DstIP>>8),
 			byte(e.DstIP>>16),
 			byte(e.DstIP>>24),
-		)
+		).String()
+
+		srcName := resolveName(podCache, srcIP)
+		dstName := resolveName(podCache, dstIP)
 
 		fmt.Printf(
 			"[TCP] PID=%d COMM=%s %s:%d -> %s:%d\n",
 			e.Pid,
 			comm,
-			srcIP,
+			srcName,
 			swapUint16(e.SrcPort),
-			dstIP,
+			dstName,
 			swapUint16(e.DstPort),
 		)
 	}
