@@ -23,11 +23,46 @@ func swapUint16(v uint16) uint16 {
 	return (v >> 8) | (v << 8)
 }
 
-func resolveName(cache *k8s.Cache, ip string) string {
-	if info, ok := cache.Lookup(ip); ok {
-		return fmt.Sprintf("%s/%s", info.Namespace, info.Name)
+var privateBlocks = []*net.IPNet{
+	mustParseCIDR("10.0.0.0/8"),
+	mustParseCIDR("172.16.0.0/12"),
+	mustParseCIDR("192.168.0.0/16"),
+	mustParseCIDR("127.0.0.0/8"),
+}
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
 	}
-	return ip
+	return n
+}
+
+func classify(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return "unknown"
+	}
+	for _, block := range privateBlocks {
+		if block.Contains(parsed) {
+			return "internal"
+		}
+	}
+	return "external"
+}
+
+func resolveName(cache *k8s.Cache, ip string) (label string, nodeZone string) {
+	if info, ok := cache.LookupPod(ip); ok {
+		label = fmt.Sprintf("pod:%s/%s", info.Namespace, info.Name)
+		if node, ok := cache.LookupNode(info.Node); ok {
+			nodeZone = fmt.Sprintf(" (node=%s zone=%s)", node.Name, node.Zone)
+		}
+		return label, nodeZone
+	}
+	if info, ok := cache.LookupService(ip); ok {
+		return fmt.Sprintf("svc:%s/%s", info.Namespace, info.Name), ""
+	}
+	return ip, ""
 }
 
 func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache) error {
@@ -72,15 +107,19 @@ func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache) error {
 			byte(e.DstIP>>24),
 		).String()
 
-		srcName := resolveName(podCache, srcIP)
-		dstName := resolveName(podCache, dstIP)
+		srcName, srcNodeZone := resolveName(podCache, srcIP)
+		dstName, _ := resolveName(podCache, dstIP)
+
+		class := classify(dstIP)
 
 		fmt.Printf(
-			"[TCP] PID=%d COMM=%s %s:%d -> %s:%d\n",
+			"[TCP][%s] proto=TCP PID=%d COMM=%s %s:%d%s -> %s:%d\n",
+			class,
 			e.Pid,
 			comm,
 			srcName,
 			swapUint16(e.SrcPort),
+			srcNodeZone,
 			dstName,
 			swapUint16(e.DstPort),
 		)
