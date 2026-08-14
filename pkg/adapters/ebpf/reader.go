@@ -3,6 +3,7 @@ package ebpf
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 
@@ -33,7 +34,7 @@ var privateBlocks = []*net.IPNet{
 func mustParseCIDR(s string) *net.IPNet {
 	_, n, err := net.ParseCIDR(s)
 	if err != nil {
-		panic(err)
+		panic(fmt.Sprintf("invalid CIDR %q: %v", s, err))
 	}
 	return n
 }
@@ -65,15 +66,19 @@ func resolveName(cache *k8s.Cache, ip string) (label string, nodeZone string) {
 	return ip, ""
 }
 
+// ReadEvents consumes events from the ring buffer until it is closed
+// (normal shutdown) or an unexpected error occurs.
 func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache) error {
 	for {
 		record, err := rd.Read()
 		if err != nil {
-			return err
+			if errors.Is(err, ringbuf.ErrClosed) {
+				return nil
+			}
+			return fmt.Errorf("read ringbuf: %w", err)
 		}
 
 		var e ringbufEvent
-
 		if err := binary.Read(
 			bytes.NewReader(record.RawSample),
 			binary.LittleEndian,
@@ -85,27 +90,12 @@ func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache) error {
 		comm := string(bytes.TrimRight(e.Comm[:], "\x00"))
 
 		if e.DstIP == 0 {
-			fmt.Printf(
-				"[EXEC] PID=%d COMM=%s\n",
-				e.Pid,
-				comm,
-			)
+			fmt.Printf("[EXEC] PID=%d COMM=%s\n", e.Pid, comm)
 			continue
 		}
 
-		srcIP := net.IPv4(
-			byte(e.SrcIP),
-			byte(e.SrcIP>>8),
-			byte(e.SrcIP>>16),
-			byte(e.SrcIP>>24),
-		).String()
-
-		dstIP := net.IPv4(
-			byte(e.DstIP),
-			byte(e.DstIP>>8),
-			byte(e.DstIP>>16),
-			byte(e.DstIP>>24),
-		).String()
+		srcIP := net.IPv4(byte(e.SrcIP), byte(e.SrcIP>>8), byte(e.SrcIP>>16), byte(e.SrcIP>>24)).String()
+		dstIP := net.IPv4(byte(e.DstIP), byte(e.DstIP>>8), byte(e.DstIP>>16), byte(e.DstIP>>24)).String()
 
 		srcName, srcNodeZone := resolveName(podCache, srcIP)
 		dstName, _ := resolveName(podCache, dstIP)

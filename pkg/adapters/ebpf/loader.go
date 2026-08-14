@@ -9,44 +9,30 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-func Start(podCache *k8s.Cache) error {
+func Start(podCache *k8s.Cache, stopCh <-chan struct{}) error {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return err
 	}
 
 	objs := tracerObjects{}
-
 	if err := loadTracerObjects(&objs, nil); err != nil {
 		return err
 	}
 	defer objs.Close()
 
-	tp, err := link.Tracepoint(
-		"syscalls",
-		"sys_enter_execve",
-		objs.HandleExec,
-		nil,
-	)
+	tp, err := link.Tracepoint("syscalls", "sys_enter_execve", objs.HandleExec, nil)
 	if err != nil {
 		return err
 	}
 	defer tp.Close()
 
-	kpEntry, err := link.Kprobe(
-		"tcp_v4_connect",
-		objs.HandleTcpConnectEntry,
-		nil,
-	)
+	kpEntry, err := link.Kprobe("tcp_v4_connect", objs.HandleTcpConnectEntry, nil)
 	if err != nil {
 		return err
 	}
 	defer kpEntry.Close()
 
-	kpExit, err := link.Kretprobe(
-		"tcp_v4_connect",
-		objs.HandleTcpConnectExit,
-		nil,
-	)
+	kpExit, err := link.Kretprobe("tcp_v4_connect", objs.HandleTcpConnectExit, nil)
 	if err != nil {
 		return err
 	}
@@ -60,6 +46,11 @@ func Start(podCache *k8s.Cache) error {
 
 	log.Println("TraceWulf eBPF program attached")
 	log.Println("Watching execve() and tcp_v4_connect() events...")
+
+	go func() {
+		<-stopCh
+		rd.Close()
+	}()
 
 	return ReadEvents(rd, podCache)
 }
