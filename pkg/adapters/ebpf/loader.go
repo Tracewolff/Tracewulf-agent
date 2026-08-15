@@ -2,6 +2,7 @@ package ebpf
 
 import (
 	"log"
+	"time"
 
 	"github.com/Tracewolff/Tracewulf-agent/pkg/adapters/k8s"
 	"github.com/cilium/ebpf/link"
@@ -47,10 +48,13 @@ func Start(podCache *k8s.Cache, stopCh <-chan struct{}) error {
 	log.Println("TraceWulf eBPF program attached")
 	log.Println("Watching execve() and tcp_v4_connect() events...")
 
+	stats := NewStats()
+	stats.StartReporter(10*time.Second, stopCh)
+
 	go func() {
 		<-stopCh
 		rd.Close()
 	}()
 
-	return ReadEvents(rd, podCache)
+	return ReadEvents(rd, podCache, stats)
 }

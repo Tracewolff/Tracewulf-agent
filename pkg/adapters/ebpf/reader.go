@@ -52,23 +52,17 @@ func classify(ip string) string {
 	return "external"
 }
 
-func resolveName(cache *k8s.Cache, ip string) (label string, nodeZone string) {
+func resolveName(cache *k8s.Cache, ip string) string {
 	if info, ok := cache.LookupPod(ip); ok {
-		label = fmt.Sprintf("pod:%s/%s", info.Namespace, info.Name)
-		if node, ok := cache.LookupNode(info.Node); ok {
-			nodeZone = fmt.Sprintf(" (node=%s zone=%s)", node.Name, node.Zone)
-		}
-		return label, nodeZone
+		return fmt.Sprintf("pod:%s/%s", info.Namespace, info.Name)
 	}
 	if info, ok := cache.LookupService(ip); ok {
-		return fmt.Sprintf("svc:%s/%s", info.Namespace, info.Name), ""
+		return fmt.Sprintf("svc:%s/%s", info.Namespace, info.Name)
 	}
-	return ip, ""
+	return ip
 }
 
-// ReadEvents consumes events from the ring buffer until it is closed
-// (normal shutdown) or an unexpected error occurs.
-func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache) error {
+func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache, stats *Stats) error {
 	for {
 		record, err := rd.Read()
 		if err != nil {
@@ -87,31 +81,19 @@ func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache) error {
 			continue
 		}
 
-		comm := string(bytes.TrimRight(e.Comm[:], "\x00"))
-
 		if e.DstIP == 0 {
-			fmt.Printf("[EXEC] PID=%d COMM=%s\n", e.Pid, comm)
+			stats.RecordExec()
 			continue
 		}
 
 		srcIP := net.IPv4(byte(e.SrcIP), byte(e.SrcIP>>8), byte(e.SrcIP>>16), byte(e.SrcIP>>24)).String()
 		dstIP := net.IPv4(byte(e.DstIP), byte(e.DstIP>>8), byte(e.DstIP>>16), byte(e.DstIP>>24)).String()
 
-		srcName, srcNodeZone := resolveName(podCache, srcIP)
-		dstName, _ := resolveName(podCache, dstIP)
-
+		srcName := resolveName(podCache, srcIP)
+		dstName := resolveName(podCache, dstIP)
 		class := classify(dstIP)
+		dstPort := swapUint16(e.DstPort)
 
-		fmt.Printf(
-			"[TCP][%s] proto=TCP PID=%d COMM=%s %s:%d%s -> %s:%d\n",
-			class,
-			e.Pid,
-			comm,
-			srcName,
-			swapUint16(e.SrcPort),
-			srcNodeZone,
-			dstName,
-			swapUint16(e.DstPort),
-		)
+		stats.RecordTCP(srcName, dstName, dstPort, class)
 	}
 }
