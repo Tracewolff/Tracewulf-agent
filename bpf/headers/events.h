@@ -4,7 +4,8 @@
 enum event_type {
     EVENT_EXEC    = 0,
     EVENT_CONNECT = 1,
-    EVENT_DATA    = 2,
+    EVENT_SEND    = 2,  // egress — this is what counts toward cost
+    EVENT_RECV    = 3,  // ingress — tracked for visibility, not billed
 };
 
 struct event {

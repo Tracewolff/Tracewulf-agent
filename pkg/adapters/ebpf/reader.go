@@ -14,7 +14,8 @@ import (
 const (
 	eventExec    = 0
 	eventConnect = 1
-	eventData    = 2
+	eventSend    = 2 // egress — counted toward cost
+	eventRecv    = 3 // ingress — not counted, avoids double-billing
 )
 
 type ringbufEvent struct {
@@ -71,10 +72,6 @@ func resolveName(cache *k8s.Cache, ip string) string {
 	return ip
 }
 
-// resolveZone returns the AZ of the given IP, but ONLY when it's a Pod IP
-// whose Node's zone label is known. Service IPs and external IPs return ""
-// (unknown) rather than a guess, because a Service can route to a backend
-// Pod in any zone — attributing a zone here would be inaccurate.
 func resolveZone(cache *k8s.Cache, ip string) string {
 	info, ok := cache.LookupPod(ip)
 	if !ok || info.Node == "" {
@@ -114,6 +111,14 @@ func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache, stats *Stats) error {
 			continue
 		}
 
+		// Ingress is intentionally not recorded — the corresponding
+		// egress event (from the sender's tcp_sendmsg) already accounts
+		// for this data. Recording both would double-count the same
+		// logical transfer.
+		if e.Type == eventRecv {
+			continue
+		}
+
 		srcIP := net.IPv4(byte(e.SrcIP), byte(e.SrcIP>>8), byte(e.SrcIP>>16), byte(e.SrcIP>>24)).String()
 		dstIP := net.IPv4(byte(e.DstIP), byte(e.DstIP>>8), byte(e.DstIP>>16), byte(e.DstIP>>24)).String()
 
@@ -127,7 +132,7 @@ func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache, stats *Stats) error {
 		switch e.Type {
 		case eventConnect:
 			stats.RecordTCP(srcName, dstName, dstPort, class, srcZone, dstZone)
-		case eventData:
+		case eventSend:
 			stats.RecordBytes(srcName, dstName, dstPort, class, srcZone, dstZone, e.Bytes)
 		}
 	}
