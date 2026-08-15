@@ -5,9 +5,12 @@ import (
 	"net/http"
 )
 
-// SnapshotProvider is anything that can return the latest snapshot as JSON.
 type SnapshotProvider interface {
 	LatestJSON() []byte
+}
+
+type HistoryProvider interface {
+	HistoryJSON() []byte
 }
 
 const dashboardHTML = `<!DOCTYPE html>
@@ -28,6 +31,7 @@ const dashboardHTML = `<!DOCTYPE html>
     --cyan:      #56d4dd;
     --amber:     #f0a75f;
     --red:       #ff6b6b;
+    --green:     #3fb950;
     --mono: ui-monospace, 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Consolas, monospace;
   }
   * { box-sizing: border-box; }
@@ -39,8 +43,6 @@ const dashboardHTML = `<!DOCTYPE html>
     padding: 28px 32px 60px;
     -webkit-font-smoothing: antialiased;
   }
-
-  /* ---------- Header ---------- */
   header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 22px; flex-wrap: wrap; gap: 10px; }
   .brand { display: flex; align-items: center; gap: 10px; }
   .brand h1 { font-size: 20px; letter-spacing: 0.02em; margin: 0; color: var(--text); font-weight: 700; }
@@ -58,15 +60,16 @@ const dashboardHTML = `<!DOCTYPE html>
   }
   #meta { color: var(--text-mute); font-size: 12px; }
 
-  /* ---------- Stat cards ---------- */
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .section-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin: 22px 0 10px; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 8px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; }
   .card .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
   .card .value { font-size: 24px; font-weight: 700; color: var(--text); }
   .card .value.accent { color: var(--cyan); }
+  .card .value.money { color: var(--green); }
   .card .sub { font-size: 11px; color: var(--text-mute); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  /* ---------- Controls ---------- */
   .controls { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
   #search {
     flex: 1; max-width: 320px;
@@ -78,8 +81,7 @@ const dashboardHTML = `<!DOCTYPE html>
   #search:focus { outline: none; border-color: var(--cyan); }
   .hint { font-size: 11px; color: var(--text-mute); }
 
-  /* ---------- Table ---------- */
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 4px; }
   table { border-collapse: collapse; width: 100%; }
   th, td { padding: 9px 14px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--border); }
   th {
@@ -97,6 +99,7 @@ const dashboardHTML = `<!DOCTYPE html>
   .pill.internal { background: rgba(86,212,221,0.12); color: var(--cyan); }
   .pill.external { background: rgba(255,107,107,0.12); color: var(--red); }
   .pill.unknown  { background: rgba(125,133,144,0.12); color: var(--text-dim); }
+  .pill.crossaz  { background: rgba(240,167,95,0.14); color: var(--amber); }
 
   .bytes-cell { position: relative; min-width: 140px; }
   .bytes-bar {
@@ -122,6 +125,7 @@ const dashboardHTML = `<!DOCTYPE html>
   <div id="meta">—</div>
 </header>
 
+<div class="section-label">This interval</div>
 <div class="stats">
   <div class="card">
     <div class="label">Unique Flows</div>
@@ -142,6 +146,23 @@ const dashboardHTML = `<!DOCTYPE html>
   </div>
 </div>
 
+<div class="section-label">Cumulative (since <span id="since-ts">—</span>)</div>
+<div class="stats">
+  <div class="card">
+    <div class="label">Total Traffic (session)</div>
+    <div class="value" id="hist-bytes">0 B</div>
+  </div>
+  <div class="card">
+    <div class="label">Cross-AZ Traffic (session)</div>
+    <div class="value" style="color:var(--amber)" id="hist-crossaz-bytes">0 B</div>
+  </div>
+  <div class="card">
+    <div class="label">Estimated Cross-AZ Cost (session)</div>
+    <div class="value money" id="hist-cost">$0.00</div>
+    <div class="sub" id="hist-rate"></div>
+  </div>
+</div>
+
 <div class="controls">
   <input id="search" type="text" placeholder="Filter by pod, service, ip, port..." />
   <span class="hint">click a column header to sort</span>
@@ -155,6 +176,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <th data-key="class">Class<span class="arrow"></span></th>
         <th data-key="count">Count<span class="arrow"></span></th>
         <th data-key="bytes">Bytes<span class="arrow"></span></th>
+        <th data-key="cost_usd">Cost<span class="arrow"></span></th>
         <th data-key="last_seen">Last Seen<span class="arrow"></span></th>
       </tr>
     </thead>
@@ -163,10 +185,20 @@ const dashboardHTML = `<!DOCTYPE html>
   <div id="empty">no flows match your filter</div>
 </div>
 
+<div class="section-label">Recent intervals (cost trend)</div>
+<div class="panel">
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Bytes</th><th>Cross-AZ Bytes</th><th>Cost</th></tr>
+    </thead>
+    <tbody id="trend-rows"></tbody>
+  </table>
+</div>
+
 <script>
 let latest = { flows: [] };
 let sortKey = 'bytes';
-let sortDir = -1; // -1 desc, 1 asc
+let sortDir = -1;
 
 function formatBytes(n) {
   n = n || 0;
@@ -174,6 +206,13 @@ function formatBytes(n) {
   if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
   if (n < 1024*1024*1024) return (n/1024/1024).toFixed(2) + ' MB';
   return (n/1024/1024/1024).toFixed(2) + ' GB';
+}
+
+function formatUSD(n) {
+  n = n || 0;
+  if (n === 0) return '$0.00';
+  if (n < 0.01) return '$' + n.toFixed(8);
+  return '$' + n.toFixed(4);
 }
 
 function pillClass(c) {
@@ -205,29 +244,32 @@ function render() {
     const flowHTML = parts.length === 2
       ? parts[0] + '<span class="arrow-sep">&rarr;</span>' + parts[1]
       : f.flow;
+    const costHTML = f.cross_az
+      ? '<span class="pill crossaz">' + formatUSD(f.cost_usd) + '</span>'
+      : '<span style="color:var(--text-mute)">—</span>';
     return '<tr>' +
       '<td class="flow-col">' + flowHTML + '</td>' +
       '<td><span class="pill ' + pillClass(f.class) + '">' + f.class + '</span></td>' +
       '<td>' + f.count + '</td>' +
       '<td class="bytes-cell"><span class="bytes-bar" style="width:' + pct + '%"></span><span class="bytes-val">' + formatBytes(f.bytes) + '</span></td>' +
+      '<td>' + costHTML + '</td>' +
       '<td>' + f.last_seen + '</td>' +
       '</tr>';
   }).join('');
 
   document.getElementById('empty').style.display = flows.length === 0 ? 'block' : 'none';
 
-  document.querySelectorAll('th').forEach(th => {
+  document.querySelectorAll('th[data-key]').forEach(th => {
     th.classList.toggle('sorted', th.dataset.key === sortKey);
-    th.querySelector('.arrow').textContent = th.dataset.key === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
+    const arrow = th.querySelector('.arrow');
+    if (arrow) arrow.textContent = th.dataset.key === sortKey ? (sortDir === 1 ? '▲' : '▼') : '';
   });
 }
 
 function updateStats(data) {
   document.getElementById('stat-flows').textContent = data.unique_flows;
   document.getElementById('stat-exec').textContent = data.exec_events;
-
-  const totalBytes = data.flows.reduce((sum, f) => sum + (f.bytes || 0), 0);
-  document.getElementById('stat-bytes').textContent = formatBytes(totalBytes);
+  document.getElementById('stat-bytes').textContent = formatBytes(data.total_bytes);
 
   const top = data.flows.slice().sort((a, b) => (b.bytes||0) - (a.bytes||0))[0];
   if (top) {
@@ -239,16 +281,40 @@ function updateStats(data) {
   }
 }
 
+function updateHistory(h) {
+  document.getElementById('since-ts').textContent = h.since;
+  document.getElementById('hist-bytes').textContent = formatBytes(h.cumulative_bytes);
+  document.getElementById('hist-crossaz-bytes').textContent = formatBytes(h.cumulative_cross_az_bytes);
+  document.getElementById('hist-cost').textContent = formatUSD(h.cumulative_cost_usd);
+
+  const rows = h.intervals.slice().reverse().slice(0, 20).map(iv => {
+    return '<tr>' +
+      '<td>' + iv.timestamp + '</td>' +
+      '<td>' + formatBytes(iv.total_bytes) + '</td>' +
+      '<td style="color:var(--amber)">' + formatBytes(iv.cross_az_bytes) + '</td>' +
+      '<td class="money" style="color:var(--green)">' + formatUSD(iv.total_cost_usd) + '</td>' +
+      '</tr>';
+  }).join('');
+  document.getElementById('trend-rows').innerHTML = rows || '<tr><td colspan="4" style="color:var(--text-mute)">no intervals recorded yet</td></tr>';
+}
+
 async function refresh() {
-  const res = await fetch('/snapshot');
-  const data = await res.json();
+  const [snapRes, histRes] = await Promise.all([
+    fetch('/snapshot'),
+    fetch('/history'),
+  ]);
+  const data = await snapRes.json();
+  const hist = await histRes.json();
+
   latest = data;
-  document.getElementById('meta').textContent = 'last refreshed ' + data.timestamp;
+  document.getElementById('meta').textContent =
+    'last refreshed ' + data.timestamp + '  ·  cost model: $' + data.cost_per_gb_usd + '/GB cross-AZ';
   updateStats(data);
+  updateHistory(hist);
   render();
 }
 
-document.querySelectorAll('th').forEach(th => {
+document.querySelectorAll('th[data-key]').forEach(th => {
   th.addEventListener('click', () => {
     const key = th.dataset.key;
     if (sortKey === key) { sortDir *= -1; }
@@ -265,14 +331,19 @@ setInterval(refresh, 5000);
 </body>
 </html>`
 
-// Start launches an HTTP server exposing the latest snapshot as JSON at
-// /snapshot and a simple auto-refreshing dashboard at /.
-func Start(addr string, stats SnapshotProvider) {
+// Start launches an HTTP server exposing the latest snapshot at /snapshot,
+// cumulative history at /history, and a live dashboard at /.
+func Start(addr string, stats SnapshotProvider, history HistoryProvider) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/snapshot", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(stats.LatestJSON())
+	})
+
+	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(history.HistoryJSON())
 	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

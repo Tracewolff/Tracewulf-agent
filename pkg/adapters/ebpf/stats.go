@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// costPerGB is the cross-AZ egress price used for estimation. Override with
-// the TRACEWULF_COST_PER_GB env var (USD per GB). Defaults to a common
-// AWS cross-AZ rate.
 var costPerGB = func() float64 {
 	if v := os.Getenv("TRACEWULF_COST_PER_GB"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -31,9 +28,6 @@ type connStat struct {
 	DstZone  string
 }
 
-// crossAZ reports whether both zones are known and different. Unknown zones
-// (Service destinations, external IPs) never count as cross-AZ — accuracy
-// over completeness.
 func (c *connStat) crossAZ() bool {
 	return c.SrcZone != "" && c.DstZone != "" && c.SrcZone != c.DstZone
 }
@@ -73,8 +67,6 @@ func (s *Stats) getOrCreate(key, class, srcZone, dstZone string) *connStat {
 		c = &connStat{Class: class, SrcZone: srcZone, DstZone: dstZone}
 		s.conns[key] = c
 	}
-	// Zones shouldn't change mid-flow for the same key, but keep them
-	// current in case a Pod's Node info updates between events.
 	if srcZone != "" {
 		c.SrcZone = srcZone
 	}
@@ -114,10 +106,15 @@ type FlowSummary struct {
 	CostUSD  float64 `json:"cost_usd"`
 }
 
+// Snapshot is one reporting interval's aggregate. TotalBytes and
+// CrossAZBytes are precomputed here so history.go doesn't need to
+// re-walk the flow list.
 type Snapshot struct {
 	Timestamp    string        `json:"timestamp"`
 	ExecEvents   uint64        `json:"exec_events"`
 	FlowCount    int           `json:"unique_flows"`
+	TotalBytes   uint64        `json:"total_bytes"`
+	CrossAZBytes uint64        `json:"cross_az_bytes"`
 	TotalCostUSD float64       `json:"total_cost_usd"`
 	CostPerGB    float64       `json:"cost_per_gb_usd"`
 	Flows        []FlowSummary `json:"flows"`
@@ -136,11 +133,16 @@ func (s *Stats) snapshotAndReset() Snapshot {
 	})
 
 	var totalCost float64
+	var totalBytes, crossAZBytes uint64
 	flows := make([]FlowSummary, 0, len(keys))
 	for _, k := range keys {
 		c := s.conns[k]
 		cost := c.costUSD()
 		totalCost += cost
+		totalBytes += c.Bytes
+		if c.crossAZ() {
+			crossAZBytes += c.Bytes
+		}
 		flows = append(flows, FlowSummary{
 			Flow:     k,
 			Class:    c.Class,
@@ -158,6 +160,8 @@ func (s *Stats) snapshotAndReset() Snapshot {
 		Timestamp:    time.Now().Format(time.RFC3339),
 		ExecEvents:   s.execCnt,
 		FlowCount:    len(flows),
+		TotalBytes:   totalBytes,
+		CrossAZBytes: crossAZBytes,
 		TotalCostUSD: totalCost,
 		CostPerGB:    costPerGB,
 		Flows:        flows,
@@ -173,12 +177,15 @@ func (s *Stats) LatestJSON() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.lastJSON == nil {
-		return []byte(`{"timestamp":"","exec_events":0,"unique_flows":0,"total_cost_usd":0,"cost_per_gb_usd":0,"flows":[]}`)
+		return []byte(`{"timestamp":"","exec_events":0,"unique_flows":0,"total_bytes":0,"cross_az_bytes":0,"total_cost_usd":0,"cost_per_gb_usd":0,"flows":[]}`)
 	}
 	return s.lastJSON
 }
 
-func (s *Stats) StartReporter(interval time.Duration, stopCh <-chan struct{}) {
+// StartReporter emits a JSON snapshot every interval, resets the live
+// counters (bounded memory), and hands the snapshot to history (if set)
+// for durable, cumulative tracking.
+func (s *Stats) StartReporter(interval time.Duration, stopCh <-chan struct{}, history *HistoryStore) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		defer ticker.Stop()
@@ -189,12 +196,14 @@ func (s *Stats) StartReporter(interval time.Duration, stopCh <-chan struct{}) {
 			case <-ticker.C:
 				snap := s.snapshotAndReset()
 				data, err := json.Marshal(snap)
-				if err != nil {
-					continue
+				if err == nil {
+					s.mu.Lock()
+					s.lastJSON = data
+					s.mu.Unlock()
 				}
-				s.mu.Lock()
-				s.lastJSON = data
-				s.mu.Unlock()
+				if history != nil {
+					history.Record(snap)
+				}
 			}
 		}
 	}()

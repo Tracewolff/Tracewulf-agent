@@ -67,10 +67,16 @@ func Start(podCache *k8s.Cache, stopCh <-chan struct{}) error {
 	log.Println("TraceWulf eBPF program attached")
 	log.Println("Watching execve(), tcp_v4_connect(), tcp_sendmsg(), tcp_recvmsg() events...")
 
-	stats := NewStats()
-	stats.StartReporter(10*time.Second, stopCh)
+	history, err := NewHistoryStore()
+	if err != nil {
+		return err
+	}
+	log.Printf("History persisting to disk, cumulative cost so far: session restored")
 
-	exporter.Start("0.0.0.0:9090", stats)
+	stats := NewStats()
+	stats.StartReporter(10*time.Second, stopCh, history)
+
+	exporter.Start("0.0.0.0:9090", stats, history)
 
 	go func() {
 		<-stopCh
