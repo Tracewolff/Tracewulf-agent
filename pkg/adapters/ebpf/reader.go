@@ -71,6 +71,25 @@ func resolveName(cache *k8s.Cache, ip string) string {
 	return ip
 }
 
+// resolveZone returns the AZ of the given IP, but ONLY when it's a Pod IP
+// whose Node's zone label is known. Service IPs and external IPs return ""
+// (unknown) rather than a guess, because a Service can route to a backend
+// Pod in any zone — attributing a zone here would be inaccurate.
+func resolveZone(cache *k8s.Cache, ip string) string {
+	info, ok := cache.LookupPod(ip)
+	if !ok || info.Node == "" {
+		return ""
+	}
+	node, ok := cache.LookupNode(info.Node)
+	if !ok {
+		return ""
+	}
+	if node.Zone == "unknown" {
+		return ""
+	}
+	return node.Zone
+}
+
 func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache, stats *Stats) error {
 	for {
 		record, err := rd.Read()
@@ -100,14 +119,16 @@ func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache, stats *Stats) error {
 
 		srcName := resolveName(podCache, srcIP)
 		dstName := resolveName(podCache, dstIP)
+		srcZone := resolveZone(podCache, srcIP)
+		dstZone := resolveZone(podCache, dstIP)
 		class := classify(dstIP)
 		dstPort := swapUint16(e.DstPort)
 
 		switch e.Type {
 		case eventConnect:
-			stats.RecordTCP(srcName, dstName, dstPort, class)
+			stats.RecordTCP(srcName, dstName, dstPort, class, srcZone, dstZone)
 		case eventData:
-			stats.RecordBytes(srcName, dstName, dstPort, class, e.Bytes)
+			stats.RecordBytes(srcName, dstName, dstPort, class, srcZone, dstZone, e.Bytes)
 		}
 	}
 }
