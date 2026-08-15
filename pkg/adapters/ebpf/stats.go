@@ -15,9 +15,10 @@ type connStat struct {
 }
 
 type Stats struct {
-	mu      sync.Mutex
-	conns   map[string]*connStat
-	execCnt uint64
+	mu       sync.Mutex
+	conns    map[string]*connStat
+	execCnt  uint64
+	lastJSON []byte
 }
 
 func NewStats() *Stats {
@@ -43,7 +44,6 @@ func (s *Stats) RecordTCP(srcName, dstName string, dstPort uint16, class string)
 	c.LastSeen = time.Now()
 }
 
-// FlowSummary is the JSON-serializable representation of one aggregated flow.
 type FlowSummary struct {
 	Flow     string `json:"flow"`
 	Class    string `json:"class"`
@@ -51,7 +51,6 @@ type FlowSummary struct {
 	LastSeen string `json:"last_seen"`
 }
 
-// Snapshot is the JSON-serializable representation of one reporting interval.
 type Snapshot struct {
 	Timestamp  string        `json:"timestamp"`
 	ExecEvents uint64        `json:"exec_events"`
@@ -59,8 +58,6 @@ type Snapshot struct {
 	Flows      []FlowSummary `json:"flows"`
 }
 
-// snapshotAndReset builds a Snapshot from current counters, sorted by count
-// descending, then clears counters for the next interval.
 func (s *Stats) snapshotAndReset() Snapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -97,8 +94,17 @@ func (s *Stats) snapshotAndReset() Snapshot {
 	return snap
 }
 
-// StartReporter emits a JSON snapshot every interval and resets counters,
-// keeping memory bounded (sliding window, not lifetime accumulation).
+// LatestJSON returns the most recently computed snapshot as JSON bytes.
+// Safe to call concurrently from an HTTP handler.
+func (s *Stats) LatestJSON() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastJSON == nil {
+		return []byte(`{"timestamp":"","exec_events":0,"unique_flows":0,"flows":[]}`)
+	}
+	return s.lastJSON
+}
+
 func (s *Stats) StartReporter(interval time.Duration, stopCh <-chan struct{}) {
 	ticker := time.NewTicker(interval)
 	go func() {
@@ -111,10 +117,11 @@ func (s *Stats) StartReporter(interval time.Duration, stopCh <-chan struct{}) {
 				snap := s.snapshotAndReset()
 				data, err := json.Marshal(snap)
 				if err != nil {
-					fmt.Println(`{"error":"failed to marshal snapshot"}`)
 					continue
 				}
-				fmt.Println(string(data))
+				s.mu.Lock()
+				s.lastJSON = data
+				s.mu.Unlock()
 			}
 		}
 	}()

@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/Tracewolff/Tracewulf-agent/pkg/adapters/exporter"
 	"github.com/Tracewolff/Tracewulf-agent/pkg/adapters/k8s"
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -50,6 +51,8 @@ func Start(podCache *k8s.Cache, stopCh <-chan struct{}) error {
 
 	stats := NewStats()
 	stats.StartReporter(10*time.Second, stopCh)
+
+	exporter.Start("0.0.0.0:9090", stats)
 
 	go func() {
 		<-stopCh
