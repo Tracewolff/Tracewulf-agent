@@ -11,6 +11,12 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
+const (
+	eventExec    = 0
+	eventConnect = 1
+	eventData    = 2
+)
+
 type ringbufEvent struct {
 	Pid     uint32
 	Comm    [16]byte
@@ -18,6 +24,9 @@ type ringbufEvent struct {
 	DstIP   uint32
 	SrcPort uint16
 	DstPort uint16
+	Bytes   uint64
+	Type    uint8
+	_       [7]byte // struct padding to match C layout, do not remove
 }
 
 func swapUint16(v uint16) uint16 {
@@ -81,7 +90,7 @@ func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache, stats *Stats) error {
 			continue
 		}
 
-		if e.DstIP == 0 {
+		if e.Type == eventExec {
 			stats.RecordExec()
 			continue
 		}
@@ -94,6 +103,11 @@ func ReadEvents(rd *ringbuf.Reader, podCache *k8s.Cache, stats *Stats) error {
 		class := classify(dstIP)
 		dstPort := swapUint16(e.DstPort)
 
-		stats.RecordTCP(srcName, dstName, dstPort, class)
+		switch e.Type {
+		case eventConnect:
+			stats.RecordTCP(srcName, dstName, dstPort, class)
+		case eventData:
+			stats.RecordBytes(srcName, dstName, dstPort, class, e.Bytes)
+		}
 	}
 }

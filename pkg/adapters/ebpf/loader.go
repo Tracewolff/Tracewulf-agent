@@ -40,6 +40,24 @@ func Start(podCache *k8s.Cache, stopCh <-chan struct{}) error {
 	}
 	defer kpExit.Close()
 
+	kpSend, err := link.Kprobe("tcp_sendmsg", objs.HandleTcpSendmsg, nil)
+	if err != nil {
+		return err
+	}
+	defer kpSend.Close()
+
+	kpRecvEntry, err := link.Kprobe("tcp_recvmsg", objs.HandleTcpRecvmsgEntry, nil)
+	if err != nil {
+		return err
+	}
+	defer kpRecvEntry.Close()
+
+	kpRecvExit, err := link.Kretprobe("tcp_recvmsg", objs.HandleTcpRecvmsgExit, nil)
+	if err != nil {
+		return err
+	}
+	defer kpRecvExit.Close()
+
 	rd, err := ringbuf.NewReader(objs.Events)
 	if err != nil {
 		return err
@@ -47,7 +65,7 @@ func Start(podCache *k8s.Cache, stopCh <-chan struct{}) error {
 	defer rd.Close()
 
 	log.Println("TraceWulf eBPF program attached")
-	log.Println("Watching execve() and tcp_v4_connect() events...")
+	log.Println("Watching execve(), tcp_v4_connect(), tcp_sendmsg(), tcp_recvmsg() events...")
 
 	stats := NewStats()
 	stats.StartReporter(10*time.Second, stopCh)

@@ -10,6 +10,7 @@ import (
 
 type connStat struct {
 	Count    uint64
+	Bytes    uint64
 	LastSeen time.Time
 	Class    string
 }
@@ -31,16 +32,34 @@ func (s *Stats) RecordExec() {
 	s.execCnt++
 }
 
-func (s *Stats) RecordTCP(srcName, dstName string, dstPort uint16, class string) {
-	key := fmt.Sprintf("%s -> %s:%d", srcName, dstName, dstPort)
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func flowKey(srcName, dstName string, dstPort uint16) string {
+	return fmt.Sprintf("%s -> %s:%d", srcName, dstName, dstPort)
+}
+
+func (s *Stats) getOrCreate(key, class string) *connStat {
 	c, ok := s.conns[key]
 	if !ok {
 		c = &connStat{Class: class}
 		s.conns[key] = c
 	}
+	return c
+}
+
+func (s *Stats) RecordTCP(srcName, dstName string, dstPort uint16, class string) {
+	key := flowKey(srcName, dstName, dstPort)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.getOrCreate(key, class)
 	c.Count++
+	c.LastSeen = time.Now()
+}
+
+func (s *Stats) RecordBytes(srcName, dstName string, dstPort uint16, class string, n uint64) {
+	key := flowKey(srcName, dstName, dstPort)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.getOrCreate(key, class)
+	c.Bytes += n
 	c.LastSeen = time.Now()
 }
 
@@ -48,6 +67,7 @@ type FlowSummary struct {
 	Flow     string `json:"flow"`
 	Class    string `json:"class"`
 	Count    uint64 `json:"count"`
+	Bytes    uint64 `json:"bytes"`
 	LastSeen string `json:"last_seen"`
 }
 
@@ -67,7 +87,7 @@ func (s *Stats) snapshotAndReset() Snapshot {
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		return s.conns[keys[i]].Count > s.conns[keys[j]].Count
+		return s.conns[keys[i]].Bytes > s.conns[keys[j]].Bytes
 	})
 
 	flows := make([]FlowSummary, 0, len(keys))
@@ -77,6 +97,7 @@ func (s *Stats) snapshotAndReset() Snapshot {
 			Flow:     k,
 			Class:    c.Class,
 			Count:    c.Count,
+			Bytes:    c.Bytes,
 			LastSeen: c.LastSeen.Format(time.RFC3339),
 		})
 	}
@@ -94,8 +115,6 @@ func (s *Stats) snapshotAndReset() Snapshot {
 	return snap
 }
 
-// LatestJSON returns the most recently computed snapshot as JSON bytes.
-// Safe to call concurrently from an HTTP handler.
 func (s *Stats) LatestJSON() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
