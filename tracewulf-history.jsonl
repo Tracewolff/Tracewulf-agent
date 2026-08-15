@@ -13,3 +13,17 @@
 {"timestamp":"2026-08-15T11:02:12Z","total_bytes":729040,"cross_az_bytes":123918,"total_cost_usd":0.0000012391799999999994,"exec_events":130,"unique_flows":201}
 {"timestamp":"2026-08-15T11:02:22Z","total_bytes":757654,"cross_az_bytes":123678,"total_cost_usd":0.0000012367799999999994,"exec_events":140,"unique_flows":203}
 {"timestamp":"2026-08-15T11:02:34Z","total_bytes":984293,"cross_az_bytes":123136,"total_cost_usd":0.0000012313599999999995,"exec_events":130,"unique_flows":201}
+{"timestamp":"2026-08-15T15:35:45Z","total_bytes":519266,"cross_az_bytes":3834,"total_cost_usd":3.8340000000000005e-8,"exec_events":20,"unique_flows":129}
+{"timestamp":"2026-08-15T15:35:55Z","total_bytes":609831,"cross_az_bytes":3756,"total_cost_usd":3.756e-8,"exec_events":16,"unique_flows":124}
+{"timestamp":"2026-08-15T15:36:05Z","total_bytes":505819,"cross_az_bytes":3586,"total_cost_usd":3.586e-8,"exec_events":12,"unique_flows":133}
+{"timestamp":"2026-08-15T15:36:15Z","total_bytes":598411,"cross_az_bytes":2732,"total_cost_usd":2.7319999999999996e-8,"exec_events":10,"unique_flows":132}
+{"timestamp":"2026-08-15T15:36:25Z","total_bytes":638165,"cross_az_bytes":3712,"total_cost_usd":3.7120000000000004e-8,"exec_events":10,"unique_flows":129}
+{"timestamp":"2026-08-15T15:36:35Z","total_bytes":519206,"cross_az_bytes":4096,"total_cost_usd":4.096e-8,"exec_events":8,"unique_flows":132}
+{"timestamp":"2026-08-15T15:36:45Z","total_bytes":621486,"cross_az_bytes":3369,"total_cost_usd":3.3690000000000006e-8,"exec_events":20,"unique_flows":135}
+{"timestamp":"2026-08-15T15:36:55Z","total_bytes":637108,"cross_az_bytes":7655,"total_cost_usd":7.655000000000001e-8,"exec_events":16,"unique_flows":133}
+{"timestamp":"2026-08-15T15:37:05Z","total_bytes":676010,"cross_az_bytes":3076,"total_cost_usd":3.0760000000000005e-8,"exec_events":12,"unique_flows":129}
+{"timestamp":"2026-08-15T15:37:15Z","total_bytes":615250,"cross_az_bytes":2837,"total_cost_usd":2.8370000000000002e-8,"exec_events":10,"unique_flows":131}
+{"timestamp":"2026-08-15T15:37:25Z","total_bytes":515807,"cross_az_bytes":2844,"total_cost_usd":2.8440000000000002e-8,"exec_events":10,"unique_flows":134}
+{"timestamp":"2026-08-15T15:37:35Z","total_bytes":469445,"cross_az_bytes":3974,"total_cost_usd":3.974e-8,"exec_events":8,"unique_flows":134}
+{"timestamp":"2026-08-15T15:37:45Z","total_bytes":542442,"cross_az_bytes":2996,"total_cost_usd":2.9960000000000005e-8,"exec_events":43,"unique_flows":137}
+{"timestamp":"2026-08-15T15:37:55Z","total_bytes":707836,"cross_az_bytes":39290,"total_cost_usd":3.9290000000000003e-7,"exec_events":16,"unique_flows":136}
