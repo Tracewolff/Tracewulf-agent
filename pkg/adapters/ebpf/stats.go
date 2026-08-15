@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -29,9 +30,6 @@ func (s *Stats) RecordExec() {
 	s.execCnt++
 }
 
-// RecordTCP aggregates by src identity -> dst identity:port, ignoring the
-// ephemeral source port so repeated connections to the same destination
-// collapse into one counter instead of growing unbounded.
 func (s *Stats) RecordTCP(srcName, dstName string, dstPort uint16, class string) {
 	key := fmt.Sprintf("%s -> %s:%d", srcName, dstName, dstPort)
 	s.mu.Lock()
@@ -45,9 +43,62 @@ func (s *Stats) RecordTCP(srcName, dstName string, dstPort uint16, class string)
 	c.LastSeen = time.Now()
 }
 
-// StartReporter prints an aggregated summary every interval and then
-// resets counters, so memory stays bounded (a sliding window, not a
-// lifetime accumulation).
+// FlowSummary is the JSON-serializable representation of one aggregated flow.
+type FlowSummary struct {
+	Flow     string `json:"flow"`
+	Class    string `json:"class"`
+	Count    uint64 `json:"count"`
+	LastSeen string `json:"last_seen"`
+}
+
+// Snapshot is the JSON-serializable representation of one reporting interval.
+type Snapshot struct {
+	Timestamp  string        `json:"timestamp"`
+	ExecEvents uint64        `json:"exec_events"`
+	FlowCount  int           `json:"unique_flows"`
+	Flows      []FlowSummary `json:"flows"`
+}
+
+// snapshotAndReset builds a Snapshot from current counters, sorted by count
+// descending, then clears counters for the next interval.
+func (s *Stats) snapshotAndReset() Snapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	keys := make([]string, 0, len(s.conns))
+	for k := range s.conns {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return s.conns[keys[i]].Count > s.conns[keys[j]].Count
+	})
+
+	flows := make([]FlowSummary, 0, len(keys))
+	for _, k := range keys {
+		c := s.conns[k]
+		flows = append(flows, FlowSummary{
+			Flow:     k,
+			Class:    c.Class,
+			Count:    c.Count,
+			LastSeen: c.LastSeen.Format(time.RFC3339),
+		})
+	}
+
+	snap := Snapshot{
+		Timestamp:  time.Now().Format(time.RFC3339),
+		ExecEvents: s.execCnt,
+		FlowCount:  len(flows),
+		Flows:      flows,
+	}
+
+	s.execCnt = 0
+	s.conns = make(map[string]*connStat)
+
+	return snap
+}
+
+// StartReporter emits a JSON snapshot every interval and resets counters,
+// keeping memory bounded (sliding window, not lifetime accumulation).
 func (s *Stats) StartReporter(interval time.Duration, stopCh <-chan struct{}) {
 	ticker := time.NewTicker(interval)
 	go func() {
@@ -57,35 +108,14 @@ func (s *Stats) StartReporter(interval time.Duration, stopCh <-chan struct{}) {
 			case <-stopCh:
 				return
 			case <-ticker.C:
-				s.printAndReset()
+				snap := s.snapshotAndReset()
+				data, err := json.Marshal(snap)
+				if err != nil {
+					fmt.Println(`{"error":"failed to marshal snapshot"}`)
+					continue
+				}
+				fmt.Println(string(data))
 			}
 		}
 	}()
-}
-
-func (s *Stats) printAndReset() {
-	s.mu.Lock()
-	execCnt := s.execCnt
-	keys := make([]string, 0, len(s.conns))
-	for k := range s.conns {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		return s.conns[keys[i]].Count > s.conns[keys[j]].Count
-	})
-
-	fmt.Printf("\n=== TraceWulf summary (last interval) === exec_events=%d unique_flows=%d\n", execCnt, len(keys))
-	limit := 15
-	for i, k := range keys {
-		if i >= limit {
-			fmt.Printf("... and %d more flows\n", len(keys)-limit)
-			break
-		}
-		c := s.conns[k]
-		fmt.Printf("[%s] %s count=%d last=%s\n", c.Class, k, c.Count, c.LastSeen.Format("15:04:05"))
-	}
-
-	s.execCnt = 0
-	s.conns = make(map[string]*connStat)
-	s.mu.Unlock()
 }
