@@ -1,3 +1,6 @@
+<p align="center">
+  <img src="Screenshot 2026-08-16 152230.png" width="684" height="565" alt="High-Level Architecture diagram of TraceWulf" />
+</p>
 <div align="center">
 
 # 🐺 TraceWulf
