@@ -1,7 +1,6 @@
 package ebpf
 
 import (
-	"log"
 	"time"
 
 	"github.com/Tracewolff/Tracewulf-agent/pkg/adapters/exporter"
@@ -11,7 +10,11 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-func Start(podCache *k8s.Cache, stopCh <-chan struct{}) error {
+// Start attaches eBPF programs, starts the dashboard, and runs the event
+// loop until stopCh is closed. report (if non-nil) is called with "ebpf"
+// once probes are attached, and "dashboard" once the HTTP server is up —
+// used to drive the startup TUI's checklist.
+func Start(podCache *k8s.Cache, stopCh <-chan struct{}, report func(stage string)) error {
 	if err := rlimit.RemoveMemlock(); err != nil {
 		return err
 	}
@@ -64,19 +67,23 @@ func Start(podCache *k8s.Cache, stopCh <-chan struct{}) error {
 	}
 	defer rd.Close()
 
-	log.Println("TraceWulf eBPF program attached")
-	log.Println("Watching execve(), tcp_v4_connect(), tcp_sendmsg(), tcp_recvmsg() events...")
+	if report != nil {
+		report("ebpf")
+	}
 
 	history, err := NewHistoryStore()
 	if err != nil {
 		return err
 	}
-	log.Printf("History persisting to disk, cumulative cost so far: session restored")
 
 	stats := NewStats()
 	stats.StartReporter(10*time.Second, stopCh, history)
 
 	exporter.Start("0.0.0.0:9090", stats, history)
+
+	if report != nil {
+		report("dashboard")
+	}
 
 	go func() {
 		<-stopCh
